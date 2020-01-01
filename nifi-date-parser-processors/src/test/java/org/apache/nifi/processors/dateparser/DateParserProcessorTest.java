@@ -16,19 +16,35 @@
  */
 package org.apache.nifi.processors.dateparser;
 
+import org.apache.nifi.serialization.record.MockRecordParser;
+import org.apache.nifi.serialization.record.MockRecordWriter;
+import org.apache.nifi.serialization.record.MockSchemaRegistry;
+import org.apache.nifi.serialization.record.RecordField;
+import org.apache.nifi.serialization.record.RecordFieldType;
 import org.apache.nifi.util.TestRunner;
 import org.apache.nifi.util.TestRunners;
 import org.junit.Before;
 import org.junit.Test;
 
 
-public class MyProcessorTest {
+public class DateParserProcessorTest {
 
     private TestRunner testRunner;
 
     @Before
-    public void init() {
+    public void init() throws Exception {
+        MockRecordParser parser = new MockRecordParser();
+        parser.addSchemaField(new RecordField("date", RecordFieldType.STRING.getDataType()));
+        MockRecordWriter writer = new MockRecordWriter();
         testRunner = TestRunners.newTestRunner(DateParserProcessor.class);
+        testRunner.addControllerService("reader", parser);
+        testRunner.addControllerService("writer", writer);
+        testRunner.setProperty(DateParserProcessor.WRITER, "writer");
+        testRunner.setProperty(DateParserProcessor.READER, "reader");
+        testRunner.setProperty("/date", "/date");
+        testRunner.enableControllerService(parser);
+        testRunner.enableControllerService(writer);
+        testRunner.assertValid();
     }
 
     @Test

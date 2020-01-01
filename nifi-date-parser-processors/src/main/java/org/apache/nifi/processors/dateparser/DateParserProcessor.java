@@ -16,6 +16,7 @@
  */
 package org.apache.nifi.processors.dateparser;
 
+import com.wanasit.chrono.Chrono;
 import org.apache.nifi.annotation.behavior.ReadsAttribute;
 import org.apache.nifi.annotation.behavior.ReadsAttributes;
 import org.apache.nifi.annotation.behavior.WritesAttribute;
@@ -35,7 +36,9 @@ import org.apache.nifi.processor.ProcessSession;
 import org.apache.nifi.processor.Relationship;
 import org.apache.nifi.processor.exception.ProcessException;
 import org.apache.nifi.processor.util.StandardValidators;
+import org.apache.nifi.record.path.FieldValue;
 import org.apache.nifi.record.path.RecordPath;
+import org.apache.nifi.record.path.RecordPathResult;
 import org.apache.nifi.serialization.RecordReader;
 import org.apache.nifi.serialization.RecordReaderFactory;
 import org.apache.nifi.serialization.RecordSetWriter;
@@ -47,12 +50,15 @@ import org.apache.nifi.util.Tuple;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
+import java.text.SimpleDateFormat;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
 import java.util.Collections;
+import java.util.Date;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Optional;
 import java.util.Set;
 
 @Tags({"example"})
@@ -196,7 +202,30 @@ public class DateParserProcessor extends AbstractProcessor {
         }
     }
 
-    private void processRecord(Record record, List<Tuple<RecordPath, RecordPath>> recordPaths) {
+    private SimpleDateFormat ISO_FORMAT = new SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss Z");
 
+    private void processRecord(Record record, List<Tuple<RecordPath, RecordPath>> recordPaths) {
+        for (Tuple<RecordPath, RecordPath> tuple : recordPaths) {
+            RecordPathResult inputResult = tuple.getKey().evaluate(record);
+            RecordPathResult outputResult = tuple.getValue().evaluate(record);
+
+            Optional<FieldValue> input = inputResult.getSelectedFields().findFirst();
+            Optional<FieldValue> output = outputResult.getSelectedFields().findFirst();
+
+            if (input.isPresent() && output.isPresent()) {
+                FieldValue inputFV = input.get();
+                FieldValue outputFV = output.get();
+
+                String inputStatement = inputFV.getValue().toString();
+                Date parsed = Chrono.ParseDate(inputStatement);
+                String formatted = ISO_FORMAT.format(parsed);
+
+                outputFV.updateValue(formatted);
+            } else {
+                if (getLogger().isDebugEnabled()) {
+                    getLogger().debug(String.format("Input present? %s; Output present? %s", input.isPresent(), output.isPresent()));
+                }
+            }
+        }
     }
 }
