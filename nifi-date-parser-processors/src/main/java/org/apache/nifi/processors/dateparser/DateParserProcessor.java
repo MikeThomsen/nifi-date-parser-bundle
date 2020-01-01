@@ -27,15 +27,26 @@ import org.apache.nifi.annotation.lifecycle.OnScheduled;
 import org.apache.nifi.components.PropertyDescriptor;
 import org.apache.nifi.components.ValidationContext;
 import org.apache.nifi.components.ValidationResult;
+import org.apache.nifi.expression.ExpressionLanguageScope;
 import org.apache.nifi.flowfile.FlowFile;
 import org.apache.nifi.processor.AbstractProcessor;
 import org.apache.nifi.processor.ProcessContext;
 import org.apache.nifi.processor.ProcessSession;
 import org.apache.nifi.processor.Relationship;
 import org.apache.nifi.processor.exception.ProcessException;
+import org.apache.nifi.processor.util.StandardValidators;
+import org.apache.nifi.record.path.RecordPath;
+import org.apache.nifi.serialization.RecordReader;
 import org.apache.nifi.serialization.RecordReaderFactory;
+import org.apache.nifi.serialization.RecordSetWriter;
 import org.apache.nifi.serialization.RecordSetWriterFactory;
+import org.apache.nifi.record.path.util.RecordPathCache;
+import org.apache.nifi.serialization.record.Record;
+import org.apache.nifi.util.Tuple;
 
+import java.io.IOException;
+import java.io.InputStream;
+import java.io.OutputStream;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
@@ -77,12 +88,18 @@ public class DateParserProcessor extends AbstractProcessor {
             .description("Failed flowfiles go to this relationship.")
             .build();
 
+    public static final Relationship ORIGINAL = new Relationship.Builder()
+            .name("original")
+            .description("On success, the original flowfile goes here.")
+            .autoTerminateDefault(true)
+            .build();
+
     private static final List<PropertyDescriptor> DESCRIPTORS = Collections.unmodifiableList(Arrays.asList(
         READER, WRITER
     ));
 
     private static final Set<Relationship> RELATIONSHIPS = Collections.unmodifiableSet(new HashSet<>(Arrays.asList(
-        SUCCESS, FAILURE
+        SUCCESS, FAILURE, ORIGINAL
     )));
 
     @Override
@@ -97,11 +114,23 @@ public class DateParserProcessor extends AbstractProcessor {
 
     private RecordReaderFactory recordReaderFactory;
     private RecordSetWriterFactory recordSetWriterFactory;
+    private RecordPathCache recordPathCache;
 
     @OnScheduled
     public void onScheduled(final ProcessContext context) {
         this.recordReaderFactory = context.getProperty(READER).asControllerService(RecordReaderFactory.class);
         this.recordSetWriterFactory = context.getProperty(WRITER).asControllerService(RecordSetWriterFactory.class);
+        this.recordPathCache = new RecordPathCache(50);
+    }
+
+    @Override
+    protected PropertyDescriptor getSupportedDynamicPropertyDescriptor(String name) {
+        return new PropertyDescriptor.Builder()
+            .name(name)
+            .required(false)
+            .expressionLanguageSupported(ExpressionLanguageScope.FLOWFILE_ATTRIBUTES)
+            .addValidator(StandardValidators.NON_EMPTY_EL_VALIDATOR)
+            .build();
     }
 
     @Override
@@ -124,6 +153,50 @@ public class DateParserProcessor extends AbstractProcessor {
         if ( flowFile == null ) {
             return;
         }
-        // TODO implement
+
+        FlowFile output = session.create(flowFile);
+        try (InputStream is = session.read(flowFile);
+             OutputStream os = session.write(output)) {
+            List<Tuple<RecordPath, RecordPath>> paths = new ArrayList<>();
+            context.getProperties().keySet().stream().filter(prop -> prop.isDynamic()).forEach(prop -> {
+                RecordPath key = recordPathCache.getCompiled(prop.getName());
+                String evaluated = context.getProperty(prop).evaluateAttributeExpressions(flowFile).getValue();
+                RecordPath value = recordPathCache.getCompiled(evaluated);
+                Tuple<RecordPath, RecordPath> temp = new Tuple<>(key, value);
+                paths.add(temp);
+            });
+
+            RecordReader reader = recordReaderFactory.createRecordReader(flowFile, is, getLogger());
+            RecordSetWriter writer = recordSetWriterFactory.createWriter(getLogger(), reader.getSchema(), os, flowFile);
+
+            Record record = reader.nextRecord();
+            writer.beginRecordSet();
+            long count = 0;
+            while (record != null) {
+                processRecord(record, paths);
+                writer.write(record);
+                count++;
+                record = reader.nextRecord();
+            }
+            writer.finishRecordSet();
+
+            reader.close();
+            writer.flush();
+            os.close();
+            is.close();
+
+            output = session.putAttribute(output, "record.count", String.valueOf(count));
+
+            session.transfer(output, SUCCESS);
+            session.transfer(output, FAILURE);
+        } catch (Exception ex) {
+            getLogger().error("", ex);
+            session.remove(output);
+            session.transfer(flowFile, FAILURE);
+        }
+    }
+
+    private void processRecord(Record record, List<Tuple<RecordPath, RecordPath>> recordPaths) {
+
     }
 }
