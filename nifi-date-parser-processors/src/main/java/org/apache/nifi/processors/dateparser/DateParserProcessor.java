@@ -46,6 +46,9 @@ import org.apache.nifi.serialization.RecordSetWriterFactory;
 import org.apache.nifi.record.path.util.RecordPathCache;
 import org.apache.nifi.serialization.record.Record;
 import org.apache.nifi.util.Tuple;
+import org.joda.time.DateTime;
+import org.joda.time.format.DateTimeFormatter;
+import org.joda.time.format.ISODateTimeFormat;
 
 import java.io.IOException;
 import java.io.InputStream;
@@ -194,7 +197,7 @@ public class DateParserProcessor extends AbstractProcessor {
             output = session.putAttribute(output, "record.count", String.valueOf(count));
 
             session.transfer(output, SUCCESS);
-            session.transfer(output, FAILURE);
+            session.transfer(flowFile, ORIGINAL);
         } catch (Exception ex) {
             getLogger().error("", ex);
             session.remove(output);
@@ -217,7 +220,13 @@ public class DateParserProcessor extends AbstractProcessor {
                 FieldValue outputFV = output.get();
 
                 String inputStatement = inputFV.getValue().toString();
-                Date parsed = Chrono.ParseDate(inputStatement);
+                Optional<Date> parsedOpt = parseIso8601(inputStatement);
+                Date parsed;
+                if (parsedOpt.isPresent()) {
+                    parsed = parsedOpt.get();
+                } else {
+                    parsed = Chrono.ParseDate(inputStatement);
+                }
                 String formatted = ISO_FORMAT.format(parsed);
 
                 outputFV.updateValue(formatted);
@@ -227,5 +236,23 @@ public class DateParserProcessor extends AbstractProcessor {
                 }
             }
         }
+    }
+
+    private Optional<Date> parseIso8601(String date) {
+        List<DateTimeFormatter> formatters = Arrays.asList(
+            ISODateTimeFormat.dateTime(), ISODateTimeFormat.dateTimeNoMillis(), ISODateTimeFormat.dateTimeParser()
+        );
+
+        for (DateTimeFormatter formatter : formatters) {
+            try {
+                DateTime dt = formatter.parseDateTime(date);
+
+                return Optional.of(dt.toInstant().toDate());
+            } catch (Exception ex) {
+
+            }
+        }
+
+        return Optional.empty();
     }
 }
