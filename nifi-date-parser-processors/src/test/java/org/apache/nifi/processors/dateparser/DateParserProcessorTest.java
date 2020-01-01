@@ -121,4 +121,14 @@ public class DateParserProcessorTest {
     public void testPattern10() {
         testPattern("2019-12-31T19:35:00-0500", "2019-12-31T19:35:00 -0500");
     }
+
+    @Test
+    public void testPattern11() {
+        testPattern("2020/01/01 17:35:31", "2020-01-01T17:35:31 -0500");
+    }
+
+    @Test
+    public void testPattern12() {
+        testPattern("01/15/2020 17:35:31", "2020-01-15T17:35:31 -0500");
+    }
 }
