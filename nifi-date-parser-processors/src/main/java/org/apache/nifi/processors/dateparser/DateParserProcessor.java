@@ -28,6 +28,7 @@ import org.apache.nifi.annotation.lifecycle.OnScheduled;
 import org.apache.nifi.components.PropertyDescriptor;
 import org.apache.nifi.components.ValidationContext;
 import org.apache.nifi.components.ValidationResult;
+import org.apache.nifi.components.Validator;
 import org.apache.nifi.expression.ExpressionLanguageScope;
 import org.apache.nifi.flowfile.FlowFile;
 import org.apache.nifi.processor.AbstractProcessor;
@@ -87,6 +88,23 @@ public class DateParserProcessor extends AbstractProcessor {
             .required(true)
             .build();
 
+    public static final PropertyDescriptor OUTPUT_FORMAT = new PropertyDescriptor.Builder()
+            .name("date-parser-output-format")
+            .displayName("Output Format")
+            .description("The format string to use for formatting output date-time entries.")
+            .required(true)
+            .defaultValue("yyyy-MM-dd'T'HH:mm:ss Z")
+            .expressionLanguageSupported(ExpressionLanguageScope.FLOWFILE_ATTRIBUTES)
+            .addValidator((subject, input, validationContext) -> {
+                try {
+                    new SimpleDateFormat(input);
+                    return new ValidationResult.Builder().valid(true).build();
+                } catch (Exception ex) {
+                    return new ValidationResult.Builder().valid(false).explanation(ex.getMessage()).build();
+                }
+            })
+            .build();
+
     public static final Relationship SUCCESS = new Relationship.Builder()
             .name("success")
             .description("Successful flowfiles go to this relationship.")
@@ -104,7 +122,7 @@ public class DateParserProcessor extends AbstractProcessor {
             .build();
 
     private static final List<PropertyDescriptor> DESCRIPTORS = Collections.unmodifiableList(Arrays.asList(
-        READER, WRITER
+        READER, WRITER, OUTPUT_FORMAT
     ));
 
     private static final Set<Relationship> RELATIONSHIPS = Collections.unmodifiableSet(new HashSet<>(Arrays.asList(
@@ -163,6 +181,18 @@ public class DateParserProcessor extends AbstractProcessor {
             return;
         }
 
+        String dateFormatString = context.getProperty(OUTPUT_FORMAT).evaluateAttributeExpressions(flowFile).getValue();
+        SimpleDateFormat format;
+
+        try {
+            format = new SimpleDateFormat(dateFormatString);
+        } catch (Exception ex) {
+            getLogger().error("", ex);
+            session.penalize(flowFile);
+            session.rollback();
+            return;
+        }
+
         FlowFile output = session.create(flowFile);
         try (InputStream is = session.read(flowFile);
              OutputStream os = session.write(output)) {
@@ -182,7 +212,7 @@ public class DateParserProcessor extends AbstractProcessor {
             writer.beginRecordSet();
             long count = 0;
             while (record != null) {
-                processRecord(record, paths);
+                processRecord(record, paths, format);
                 writer.write(record);
                 count++;
                 record = reader.nextRecord();
@@ -205,9 +235,7 @@ public class DateParserProcessor extends AbstractProcessor {
         }
     }
 
-    private SimpleDateFormat ISO_FORMAT = new SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss Z");
-
-    private void processRecord(Record record, List<Tuple<RecordPath, RecordPath>> recordPaths) {
+    private void processRecord(Record record, List<Tuple<RecordPath, RecordPath>> recordPaths, SimpleDateFormat outputFormat) {
         for (Tuple<RecordPath, RecordPath> tuple : recordPaths) {
             RecordPathResult inputResult = tuple.getKey().evaluate(record);
             RecordPathResult outputResult = tuple.getValue().evaluate(record);
@@ -227,7 +255,7 @@ public class DateParserProcessor extends AbstractProcessor {
                 } else {
                     parsed = Chrono.ParseDate(inputStatement);
                 }
-                String formatted = ISO_FORMAT.format(parsed);
+                String formatted = outputFormat.format(parsed);
 
                 outputFV.updateValue(formatted);
             } else {
