@@ -28,6 +28,7 @@
     <packaging>pom</packaging>
 
     <modules>
+	<module>chrono-java</module>
         <module>nifi-date-parser-processors</module>
         <module>nifi-date-parser-nar</module>
     </modules>
